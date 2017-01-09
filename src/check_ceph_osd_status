@@ -1,0 +1,87 @@
+#!/usr/bin/python
+
+# Script checks for down OSD-s
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+
+import json
+import commands
+import sys
+import argparse
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+CEPH_COMMAND = '/usr/bin/ceph'
+
+
+def get_osd_status(ceph_cmd):
+    ceph_check = "%s osd stat -f json 2>/dev/null" % (ceph_cmd)
+    osd_stat_json_txt = commands.getoutput(ceph_check)
+    try:
+        osd_stat_json = json.loads(osd_stat_json_txt)
+    except:
+        print "ERROR: Unable to parse %s output" % (ceph_check)
+        sys.exit(STATUS_UNKNOWN)
+    return osd_stat_json
+
+
+def parse_arguments():
+    """ Return args collected from cmd line (output: dict) """
+    parser = argparse.ArgumentParser(description="ceph osd status check")
+    parser.add_argument('-c', '--critical', help='Critical number of failed OSD-s, default is 2 ', default=2, type=int, required=False)
+    parser.add_argument('-e', '--exe', help='ceph executable [%s]' % CEPH_COMMAND)
+    parser.add_argument('-C', '--conf', help='alternative ceph conf file')
+    parser.add_argument('-m', '--monaddress', help='ceph monitor address[:port]')
+    parser.add_argument('-i', '--id', help='ceph client id')
+    parser.add_argument('-k', '--keyring', help='ceph client keyring file')
+    return parser.parse_args()
+
+
+def build_command():
+    global CEPH_COMMAND
+    if args.exe:
+        CEPH_COMMAND = args.exe
+    ceph_cmd = CEPH_COMMAND
+    if args.monaddress:
+        ceph_cmd = "%s -m %s" % (ceph_cmd, args.monaddress)
+    if args.conf:
+        ceph_cmd = "%s -c %s" % (ceph_cmd, args.conf)
+    if args.id:
+        ceph_cmd = "%s --id %s" % (ceph_cmd, args.id)
+    if args.keyring:
+        ceph_cmd = "%s --keyring %s" % (ceph_cmd, args.keyring)
+    print ceph_cmd
+    return ceph_cmd
+
+
+def main():
+    global args
+    args = parse_arguments()
+    osd_stat = get_osd_status(build_command())
+    failed_osds = osd_stat['num_osds'] - osd_stat['num_in_osds']
+    if failed_osds > args.critical:
+        print "CRITICAL: Total OSD-s: %s . Down OSD-s: %s" % (osd_stat['num_osds'],osd_stat['num_osds'] - osd_stat['num_in_osds'])
+        return STATUS_ERROR
+    if failed_osds > 0:
+        print "WARNING: Total OSD-s: %s . Down OSD-s: %s" % (osd_stat['num_osds'],osd_stat['num_osds'] - osd_stat['num_in_osds'])
+        return STATUS_WARNING
+    print "OK: Total OSD-s: %s . Down OSD-s: %s" % (osd_stat['num_osds'],osd_stat['num_osds'] - osd_stat['num_in_osds'])
+    return STATUS_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())
